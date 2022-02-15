@@ -14,6 +14,7 @@ using Molder.Database.Models.Parameters;
 using System.Data.SqlClient;
 using System.Linq;
 using Molder.Infrastructures;
+using System.Threading.Tasks;
 
 namespace Molder.Database.Tests
 {
@@ -82,6 +83,16 @@ namespace Molder.Database.Tests
             Action action = () => step.ConnectToDB_SqlServer(dbConnectionString, dbConnectionParams);
             action.Should()
                 .Throw<ConnectSqlException>();
+        }
+
+        [Fact]
+        public async Task ConnectToDB_SqlServerAsync_DbParamsIsNull_ReturnThrow()
+        {
+            dbConnectionParams = new SqlConnectionStringBuilder { InitialCatalog = "", DataSource = "", UserID = "", Password = "", ConnectTimeout = 1, ConnectRetryCount = 1 };
+
+            Func<Task> action = async () => await step.ConnectToDB_SqlServerAsync(dbConnectionString, dbConnectionParams);
+            await action.Should()
+                .ThrowAsync<ConnectSqlException>();
         }
 
         [Fact]

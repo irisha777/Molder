@@ -8,6 +8,7 @@ using Molder.Database.Models.Providers;
 using System.Text;
 using System.Data.Common;
 using Molder.Database.Infrastructures;
+using System.Threading.Tasks;
 
 namespace Molder.Database.Models
 {
@@ -48,6 +49,31 @@ namespace Molder.Database.Models
                 throw new ConnectSqlException($"Connection failed: {ex.Message}");
             }
         }
+
+        public async Task<bool> CreateAsync(DbConnectionStringBuilder sqlConnectionStringBuilder)
+        {
+            try
+            {
+                var connectionString = sqlConnectionStringBuilder as SqlConnectionStringBuilder;
+
+                Log.Logger().LogInformation($"Connection has parameters: {Helpers.Message.CreateMessage(connectionString)}");
+
+                var connect = await _provider.CreateAsync(connectionString.ToString());
+
+                return connect;
+            }
+            catch (ConnectSqlException ex)
+            {
+                Log.Logger().LogError($"Connection failed.{ex.Message}");
+                throw new ConnectSqlException($"Connection failed. {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                Log.Logger().LogError($"Connection failed: {ex.Message}");
+                throw new ConnectSqlException($"Connection failed: {ex.Message}");
+            }
+        }
+
         public bool IsConnectAlive()
         {
             var result = _provider.IsConnectAlive();
@@ -63,6 +89,12 @@ namespace Molder.Database.Models
             _provider.Disconnect();
         }
 
+        [ExcludeFromCodeCoverage]
+        public async Task DisposeAsync()
+        {
+            await _provider.DisconnectAsync();
+        }
+
         public int ExecuteNonQuery(string query, int? timeout = null)
         {
             var command = _provider.SetupCommand(query, timeout);
@@ -73,6 +105,30 @@ namespace Molder.Database.Models
                 {
                     command.Transaction = transaction;
                     affectedRows = command.ExecuteNonQuery();
+                },
+                (ex) =>
+                {
+                    Log.Logger().LogError($"Failed to execute SQL Non-Query.{Environment.NewLine}Error Message: {ex.Message}{Environment.NewLine}Query:{Environment.NewLine}{query}");
+                    throw new SqlQueryException($"Failed to execute SQL Non-Query.{Environment.NewLine}Error Message: {ex.Message}{Environment.NewLine}Query:{Environment.NewLine}{query}");
+                },
+                () =>
+                {
+                    Log.Logger().LogInformation($"SQL Non-Query: {query}");
+                });
+
+            return affectedRows;
+        }
+
+        public async Task<int> ExecuteNonQueryAsync(string query, int? timeout = null)
+        {
+            var command = _provider.SetupCommand(query, timeout);
+
+            var affectedRows = 0;
+            await _provider.UsingTransactionAsync(
+                async (transaction) =>
+                {
+                    command.Transaction = transaction;
+                    affectedRows = await command.ExecuteNonQueryAsync();
                 },
                 (ex) =>
                 {
@@ -103,6 +159,45 @@ namespace Molder.Database.Models
                     reader = command.ExecuteReader();
                     tmpResults.Load(reader);
 
+                    reader.Dispose();
+                },
+                (ex) =>
+                {
+                    Log.Logger().LogError($"Failed to execute SQL Query.{Environment.NewLine}Error Message: {ex.Message}{Environment.NewLine}Query:{Environment.NewLine}{query}");
+                    reader?.Dispose();
+                    throw new SqlQueryException($"Failed to execute SQL Query.{Environment.NewLine}Error Message: {ex.Message}{Environment.NewLine}Query:{Environment.NewLine}{query}");
+                },
+                () =>
+                {
+                    Log.Logger().LogInformation($"SQL Query: {query}");
+                });
+
+            results = tmpResults;
+            if (string.IsNullOrWhiteSpace(results.TableName))
+            {
+                results.TableName = "SQLResults";
+            }
+
+            var affectedRows = tmpResults?.Rows?.Count ?? 0;
+            tmpResults.Dispose();
+            return (results, affectedRows);
+        }
+
+        public async Task<(object, int)> ExecuteQueryAsync(string query, int? timeout = null)
+        {
+            var results = new DataTable();
+
+            var command = _provider.SetupCommand(query, timeout);
+
+            IDataReader reader = null;
+            var tmpResults = results;
+
+            await _provider.UsingTransactionAsync(
+                async (transaction) =>
+                {
+                    command.Transaction = transaction;
+                    reader = await command.ExecuteReaderAsync();
+                    tmpResults.Load(reader);
                     reader.Dispose();
                 },
                 (ex) =>
@@ -167,6 +262,46 @@ namespace Molder.Database.Models
             return sb.ToString();
         }
 
+        public async Task<string> ExecuteStringQueryAsync(string query, int? timeout = null)
+        {
+            var command = _provider.SetupCommand(query, timeout);
+
+            SqlDataReader reader = null;
+            var sb = new StringBuilder();
+
+            await _provider.UsingTransactionAsync(
+                async (transaction) =>
+                {
+                    command.Transaction = transaction;
+                    reader = await command.ExecuteReaderAsync();
+                    if (reader.HasRows && reader.FieldCount == 1)
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            sb.Append(reader[0]);
+                        }
+                    }
+                    else
+                    {
+                        Log.Logger().LogError($"Failed to execute SQL Query (String).{Environment.NewLine}Error Message: sql query result returns more than one field {Environment.NewLine}Query:{Environment.NewLine}{query}");
+                        throw new SqlQueryException($"Failed to execute SQL Query (String).{Environment.NewLine}Error Message: sql query result returns more than one field {Environment.NewLine}Query:{Environment.NewLine}{query}");
+                    }
+
+                    await reader.DisposeAsync();
+                },
+                (ex) =>
+                {
+                    Log.Logger().LogError($"Failed to execute SQL Query (String).{Environment.NewLine}Error Message: {ex.Message}{Environment.NewLine}Query:{query}");
+                    reader?.Dispose();
+                    throw new SqlQueryException($"Failed to execute SQL Query (String).{Environment.NewLine}Error Message: {ex.Message}{Environment.NewLine}Query:{Environment.NewLine}{query}");
+                },
+                () =>
+                {
+                    Log.Logger().LogInformation($"SQL Query (String): {query}");
+                });
+            return sb.ToString();
+        }
+
         public object ExecuteScalar(string query, int? timeout = null)
         {
             var command = _provider.SetupCommand(query, timeout);
@@ -186,6 +321,29 @@ namespace Molder.Database.Models
                 () =>
                 {
                 Log.Logger().LogInformation($"SQL Query (Scalar): {query}");
+                });
+            return result;
+        }
+
+        public async Task<object> ExecuteScalarAsync(string query, int? timeout = null)
+        {
+            var command = _provider.SetupCommand(query, timeout);
+
+            object result = null;
+            await _provider.UsingTransactionAsync(
+                async (transaction) =>
+                {
+                    command.Transaction = transaction;
+                    result = await command.ExecuteScalarAsync();
+                },
+                (ex) =>
+                {
+                    Log.Logger().LogError($"Failed to execute SQL Query (Scalar).{Environment.NewLine}Error Message: {ex.Message}{Environment.NewLine}Query:{Environment.NewLine}{query}");
+                    throw new SqlQueryException($"Failed to execute SQL Query (Scalar).{Environment.NewLine}Error Message: {ex.Message}{Environment.NewLine}Query:{Environment.NewLine}{query}");
+                },
+                () =>
+                {
+                    Log.Logger().LogInformation($"SQL Query (Scalar): {query}");
                 });
             return result;
         }
