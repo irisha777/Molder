@@ -117,7 +117,7 @@ namespace Molder.Database.Steps
         /// <summary>
         /// Выполнение ExecuteQueryAsync или ExecuteNonQueryAsync БЕЗ сохранения результата
         /// </summary>        
-        [StepDefinition(@"я асинхронно выполняю ""(.+)"" запрос в БД ""(.+)"" и не сохраняю результат:")]
+        [StepDefinition(@"я выполняю асинхронный ""(.+)"" запрос в БД ""(.+)"" и не сохраняю результат:")]
         public async Task ExecuteQueryTypeAsync(QueryType queryType, string connectionName, QueryParam query)
         {
             var (_, count) = await ExecuteAnyRequestAsync(queryType, connectionName, query);
@@ -125,12 +125,25 @@ namespace Molder.Database.Steps
         }
 
         /// <summary>
-        /// Выполнение ExecuteQuery или ExecuteNonQuery C сохранением результата
+        /// Выполнение ExecuteQuery или ExecuteNonQuery c сохранением результата
         /// </summary>        
         [StepDefinition(@"я выполняю ""(.+)"" запрос в БД ""(.+)"" и сохраняю результат в переменную ""(.+)"":")]
         public void ExecuteQueryTypeWithVarName(QueryType queryType, string connectionName, string varName, QueryParam query)
         {
             var (outRecords, count) = ExecuteAnyRequest(queryType, connectionName, query);
+            Log.Logger().LogInformation($"Request returned: {Environment.NewLine} {(outRecords != null ? ((DataTable)outRecords).CreateMessage() : $"is empty")}");
+
+            this.variableController.SetVariable(varName, typeof(DataTable), outRecords);
+            Log.Logger().LogInformation($"Request {query} returned {count} row(s)");
+        }
+
+        /// <summary>
+        /// Выполнение ExecuteQueryAsync или ExecuteNonQueryAsync c сохранением результата
+        /// </summary>        
+        [StepDefinition(@"я выполняю асинхронный ""(.+)"" запрос в БД ""(.+)"" и сохраняю результат в переменную ""(.+)"":")]
+        public async Task ExecuteQueryTypeWithVarNameAsync(QueryType queryType, string connectionName, string varName, QueryParam query)
+        {
+            var (outRecords, count) = await ExecuteAnyRequestAsync(queryType, connectionName, query);
             Log.Logger().LogInformation($"Request returned: {Environment.NewLine} {(outRecords != null ? ((DataTable)outRecords).CreateMessage() : $"is empty")}");
 
             this.variableController.SetVariable(varName, typeof(DataTable), outRecords);
@@ -386,7 +399,7 @@ namespace Molder.Database.Steps
         /// <param name="varName">Идентификатор переменной.</param>
         /// <param name="query">Запрос.</param>
         [Scope(Tag = "DBAccess")]
-        [StepDefinition(@"я сохраняю значение единственной ячейки из выборки из БД ""(.+)"" в переменную ""(.+)"":")]
+        [StepDefinition(@"я асинхронно сохраняю значение единственной ячейки из выборки из БД ""(.+)"" в переменную ""(.+)"":")]
         public async Task SelectScalarFromDbSetVariableAsync(string connectionName, string varName, QueryParam query)
         {
             databaseController.Connections.Should().ContainKey(connectionName, $"Connection: \"{connectionName}\" does not exist");
